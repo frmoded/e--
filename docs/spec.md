@@ -1,6 +1,6 @@
 # E-- (English--) — Language Specification
 
-**Version:** 0.1.3 (draft)
+**Version:** 0.1.4 (draft)
 **Status:** design — no implementation yet
 **License:** Apache 2.0
 
@@ -270,8 +270,37 @@ editable English). Resolution is **cached, keyed by the exact slot text**
 - Edited slot text: cache miss → re-resolve.
 - Clearing the cache forces full re-resolution.
 
-The cache file is plain `phrase -> value`, diffable and committable. The cache
-**is** the freeze: canonical stays live English while builds stay reproducible.
+The cache is a JSON file (default `.emm_cache.json` in the working directory): an
+object mapping the **exact slot text** to the resolved **Python-expression
+string**. It is **committed to git** so builds are reproducible offline and the
+resolved values are diffable and auditable. The cache **is** the freeze:
+canonical stays live English while builds stay reproducible.
+
+#### 4.4.2 Resolver implementation (LLM)
+
+The resolver is a `resolve_slot(text) -> str` callable, invoked at transpile time
+for each `{{ text }}` slot. The reference implementation:
+
+- Uses the Anthropic API, model **`claude-haiku-4-5-20251001`** by default
+  (cheapest/fastest; slot resolution is small and factual).
+- Instructs the model to return **only a single Python expression** representing
+  the value — no prose, no code fences.
+- Slots may resolve to **any Python expression**, not only literals.
+- Validates the returned string parses as a Python expression
+  (`ast.parse(s, mode="eval")`) before baking it. The expression is **not
+  executed at transpile time** — it is only run if/when the generated Python is
+  run. Invalid (non-parsing) responses raise an error.
+- Reads the API key from the `ANTHROPIC_API_KEY` environment variable; a missing
+  key when a slot needs resolving is a clear, actionable error.
+- Caches results per §4.4.1, so a key is only needed the first time a given slot
+  text is seen.
+
+**Safety trade-off.** Because slots may resolve to arbitrary expressions (not
+just literals), the model can place executable code into the generated Python.
+This is a deliberate power-for-safety trade chosen for E--. Mitigations: the
+expression is validated as parseable but never executed at transpile time, and
+the cache is committed and diffable, so every baked value is reviewable in
+version control before it ever runs.
 
 ---
 
@@ -450,12 +479,16 @@ print(result)
   constants is warranted, or `UPPER_CASE` convention suffices.
 - **Normalizer canonicalization guarantees.** How strictly the normalizer must
   round-trip (free English → canonical → same canonical).
-- **Cache format and location.** On-disk schema for the `phrase -> value` cache.
 
 ---
 
 ## Changelog
 
+- **0.1.4** — `{{ }}` resolver specified (§4.4.2): Anthropic Haiku by default,
+  returns a single Python expression (any expression, validated by `ast.parse`
+  but not executed at transpile time), key via `ANTHROPIC_API_KEY`. Cache format
+  fixed (§4.4.1): committed JSON `.emm_cache.json` mapping slot text → expression
+  string. Cache-format open question resolved.
 - **0.1.3** — `not` rule made symmetric (§4.3): `not` may not sit on either side
   of an infix operator without grouping. Added conditionals (§5.2): `Otherwise
   if <cond>:` → `elif`, `Otherwise:` → `else`, attached to a governing `If` at
