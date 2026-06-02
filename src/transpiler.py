@@ -13,9 +13,9 @@ CLI:
 
     python3 src/transpiler.py path/to/file.emm
 
-prints the transpiled Python. The CLI wires a tiny PLACEHOLDER slot resolver
-(a hardcoded phrase -> literal map) purely for the demo — it is NOT real LLM
-resolution.
+prints the transpiled Python. The CLI wires the real Anthropic-backed,
+cache-first slot resolver (see ``resolver.make_anthropic_resolver``); files
+with no ``{{ }}`` slots transpile with no API key.
 """
 
 from __future__ import annotations
@@ -26,7 +26,8 @@ import sys
 from lexer import tokenize
 from parser import parse
 from emitter import emit
-from errors import EmmSyntaxError
+from errors import EmmSyntaxError, EmmResolveError
+from resolver import make_anthropic_resolver
 
 
 def _default_resolver(text: str) -> str:
@@ -44,20 +45,6 @@ def transpile(source: str, resolve_slot=None) -> str:
 
 
 # --- CLI -----------------------------------------------------------------
-
-# PLACEHOLDER resolver for the CLI demo only. NOT real LLM resolution — a
-# hardcoded phrase -> Python-literal map so examples with {{ }} slots run.
-_CLI_PLACEHOLDER_SLOTS = {
-    "the first prime number greater than 5": "7",
-}
-
-
-def _cli_resolver(text: str) -> str:
-    if text in _CLI_PLACEHOLDER_SLOTS:
-        return _CLI_PLACEHOLDER_SLOTS[text]
-    raise NotImplementedError(
-        f"CLI placeholder resolver has no mapping for slot: {text!r}")
-
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(
@@ -87,19 +74,18 @@ def main(argv=None) -> int:
         print(f"error: could not read {args.input}: {exc}", file=sys.stderr)
         return 2
 
+    # Real {{ }} resolver: cached + Anthropic-backed. Slot-free files never
+    # invoke it, so they transpile with no API key.
+    resolve = make_anthropic_resolver()
+
     # Transpile with friendly errors.
     try:
-        python_src = transpile(source, resolve_slot=_cli_resolver)
+        python_src = transpile(source, resolve_slot=resolve)
     except EmmSyntaxError as exc:
         print(f"syntax error: {exc}", file=sys.stderr)
         return 1
-    except NotImplementedError:
-        print(
-            "error: this program contains an LLM value slot ({{ ... }}) that "
-            "cannot be run yet.\n"
-            "LLM slot resolution is not implemented; remove the slot or wait "
-            "for resolver support.",
-            file=sys.stderr)
+    except EmmResolveError as exc:
+        print(f"error: {exc}", file=sys.stderr)
         return 1
 
     if args.out:

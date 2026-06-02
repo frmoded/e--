@@ -123,6 +123,39 @@ Notes:
   clear message rather than crash. The `examples/describe.emm` program uses no
   slots, so `--run` works end to end with no model.
 
+## Resolving `{{ }}` slots (LLM setup)
+
+A `{{ ... }}` slot is an English phrase that the transpiler resolves to a Python
+expression **once, at transpile time**, using an LLM — then caches the result so
+later builds are offline and reproducible. Files with **no** `{{ }}` slots need
+no API key and no setup.
+
+To run a slot example end to end:
+
+```
+# 1. create and activate a virtual env
+python3 -m venv .venv && source .venv/bin/activate
+
+# 2. install dependencies (the Anthropic SDK)
+pip install -r requirements.txt
+
+# 3. set your Anthropic API key
+export ANTHROPIC_API_KEY=sk-ant-...
+
+# 4. transpile and run a slot example
+python3 src/transpiler.py examples/primes.emm --run
+```
+
+The first run calls the model (Anthropic Haiku) to resolve each slot, writes the
+resolved Python expression to **`.emm_cache.json`**, and bakes it into the
+output. Every later run is an **offline cache hit** — no model call, identical
+result. The cache file maps the exact slot text to its resolved expression and
+is meant to be **committed**, so resolved values stay diffable and reviewable.
+
+Editing a slot's text is a cache miss and re-resolves; deleting the cache forces
+full re-resolution. Files without `{{ }}` slots (like `examples/describe.emm`)
+never touch the API.
+
 ## Status
 
 Early design. The language is specified in [`docs/spec.md`](docs/spec.md). The
