@@ -1,10 +1,12 @@
 """Test matrix for the E-- deterministic core (prompt §5)."""
 
 import os
+import subprocess
 import sys
 import unittest
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
+_REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+sys.path.insert(0, os.path.join(_REPO_ROOT, "src"))
 
 from transpiler import transpile  # noqa: E402
 from errors import EmmSyntaxError  # noqa: E402
@@ -313,6 +315,57 @@ class TestLlmSlots(unittest.TestCase):
     def test_default_resolver_raises(self):
         with self.assertRaises(NotImplementedError):
             transpile("Set v to {{anything}}.")
+
+
+DESCRIBE_PY = (
+    "def describe(n):\n"
+    "    if n > 10:\n"
+    "        return \"big\"\n"
+    "    return \"small\"\n"
+    "for n in [3, 42, 7]:\n"
+    "    print(describe(n))"
+)
+
+_CLI = os.path.join(_REPO_ROOT, "src", "transpiler.py")
+_DESCRIBE_EMM = os.path.join(_REPO_ROOT, "examples", "describe.emm")
+
+
+class TestCliRunner(unittest.TestCase):
+    def test_transpile_describe_example(self):
+        with open(_DESCRIBE_EMM, "r", encoding="utf-8") as fh:
+            src = fh.read()
+        self.assertEqual(t(src).strip(), DESCRIBE_PY.strip())
+
+    def test_cli_transpile_stdout(self):
+        try:
+            proc = subprocess.run(
+                [sys.executable, _CLI, _DESCRIBE_EMM],
+                capture_output=True, text=True, cwd=_REPO_ROOT)
+        except OSError as exc:
+            self.skipTest(f"cannot spawn subprocess: {exc}")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(proc.stdout.strip(), DESCRIBE_PY.strip())
+
+    def test_cli_run_executes(self):
+        try:
+            proc = subprocess.run(
+                [sys.executable, _CLI, _DESCRIBE_EMM, "--run"],
+                capture_output=True, text=True, cwd=_REPO_ROOT)
+        except OSError as exc:
+            self.skipTest(f"cannot spawn subprocess: {exc}")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(proc.stdout, "small\nbig\nsmall\n")
+
+    def test_cli_missing_file(self):
+        try:
+            proc = subprocess.run(
+                [sys.executable, _CLI, "does/not/exist.emm"],
+                capture_output=True, text=True, cwd=_REPO_ROOT)
+        except OSError as exc:
+            self.skipTest(f"cannot spawn subprocess: {exc}")
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("error", proc.stderr.lower())
+        self.assertNotIn("Traceback", proc.stderr)
 
 
 if __name__ == "__main__":

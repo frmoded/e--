@@ -47,11 +47,63 @@ Markers keep it unambiguous: `[[name]]` is a function call, a bare word is a
 variable, `"x"`/`3` are literals, `<1, 2, 3>` is a list, and `{{ ... }}` is an
 English phrase the transpiler resolves once and bakes in.
 
+## Running E--
+
+E-- source files use the **`.emm`** extension (English--). The deterministic
+canonical-to-Python core is implemented; you can transpile and run `.emm` files
+from the command line.
+
+Transpile a file and print the generated Python to your screen:
+
+```
+python3 src/transpiler.py examples/describe.emm
+```
+
+prints:
+
+```python
+def describe(n):
+    if n > 10:
+        return "big"
+    return "small"
+for n in [3, 42, 7]:
+    print(describe(n))
+```
+
+Write the generated Python to a file instead of the screen:
+
+```
+python3 src/transpiler.py examples/describe.emm -o out.py
+```
+
+Transpile **and run** it, so you see the program's actual output:
+
+```
+python3 src/transpiler.py examples/describe.emm --run
+```
+
+prints:
+
+```
+small
+big
+small
+```
+
+Notes:
+
+- The `.emm` extension is the convention for E-- source files.
+- `{{ ... }}` LLM value slots are **not runnable yet** — resolving them needs a
+  language model, which is not wired up. A file containing a slot will report a
+  clear message rather than crash. The `examples/describe.emm` program uses no
+  slots, so `--run` works end to end with no model.
+
 ## Status
 
-Early design. The language is specified in [`docs/spec.md`](docs/spec.md); there
-is no implementation yet. The deterministic canonical-to-Python core is the next
-build target.
+Early design. The language is specified in [`docs/spec.md`](docs/spec.md). The
+deterministic canonical-to-Python core (lexer, parser, emitter) is implemented
+with a runnable CLI — see "Running E--" above. The LLM normalizer (free English
+→ canonical) and real `{{ }}` slot resolution are not yet built.
 
 ## Using E-- in your own software
 

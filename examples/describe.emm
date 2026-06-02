@@ -1,0 +1,7 @@
+Define [[describe]] taking n:
+    If n is greater than 10:
+        Give back "big".
+    Give back "small".
+
+For each n in <3, 42, 7>:
+    Do [[print]]([[describe]](n)).
