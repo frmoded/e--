@@ -1,0 +1,274 @@
+"""Recursive-descent parser for canonical E-- (spec §4, §5).
+
+Consumes the token list from ``lexer.tokenize`` and produces a ``Program``.
+Enforces the no-precedence rule (spec §4.3): a chain must use one identical
+operator, mixing requires explicit grouping, and ``not`` binds a single
+operand and cannot combine with an infix operator unless grouped.
+"""
+
+from __future__ import annotations
+
+from errors import EmmSyntaxError
+from ast_nodes import (
+    Assign, Do, Return, If, While, ForEach, Define, Program,
+    Num, Str, Bool, NoneLit, Var, Call, ListLit, DictLit, LlmSlot, Group,
+    BinOp, UnaryOp,
+)
+
+
+class _Stream:
+    def __init__(self, tokens):
+        self.tokens = tokens
+        self.i = 0
+
+    def peek(self):
+        return self.tokens[self.i]
+
+    def next(self):
+        tok = self.tokens[self.i]
+        self.i += 1
+        return tok
+
+    def expect(self, kind):
+        tok = self.tokens[self.i]
+        if tok.kind != kind:
+            raise EmmSyntaxError(
+                f"line {tok.line}: expected {kind}, got {tok.kind} "
+                f"({tok.value!r})")
+        self.i += 1
+        return tok
+
+
+def parse(tokens) -> Program:
+    s = _Stream(tokens)
+    statements = []
+    while s.peek().kind != "EOF":
+        statements.append(_statement(s))
+    return Program(statements)
+
+
+# --- Statements ----------------------------------------------------------
+
+def _statement(s: _Stream):
+    kind = s.peek().kind
+    if kind == "SET":
+        s.next()
+        name = s.expect("IDENT").value
+        s.expect("TO")
+        value = _expression(s)
+        s.expect("DOT")
+        s.expect("NEWLINE")
+        return Assign(name, value)
+    if kind == "DO":
+        s.next()
+        call = _operand(s)
+        if not isinstance(call, Call):
+            raise EmmSyntaxError(
+                f"line {s.peek().line}: 'Do' requires a call, got "
+                f"{type(call).__name__}")
+        s.expect("DOT")
+        s.expect("NEWLINE")
+        return Do(call)
+    if kind == "GIVEBACK":
+        s.next()
+        value = _expression(s)
+        s.expect("DOT")
+        s.expect("NEWLINE")
+        return Return(value)
+    if kind == "IF":
+        s.next()
+        cond = _expression(s)
+        s.expect("COLON")
+        body = _block(s)
+        return If(cond, body)
+    if kind == "WHILE":
+        s.next()
+        cond = _expression(s)
+        s.expect("COLON")
+        body = _block(s)
+        return While(cond, body)
+    if kind == "FOREACH":
+        s.next()
+        var = s.expect("IDENT").value
+        s.expect("IN")
+        iterable = _expression(s)
+        s.expect("COLON")
+        body = _block(s)
+        return ForEach(var, iterable, body)
+    if kind == "DEFINE":
+        s.next()
+        s.expect("LCALL")
+        name = s.expect("IDENT").value
+        s.expect("RCALL")
+        s.expect("TAKING")
+        params = _params(s)
+        s.expect("COLON")
+        body = _block(s)
+        return Define(name, params, body)
+    tok = s.peek()
+    raise EmmSyntaxError(
+        f"line {tok.line}: expected a statement verb, got {tok.kind} "
+        f"({tok.value!r})")
+
+
+def _block(s: _Stream):
+    s.expect("NEWLINE")
+    s.expect("INDENT")
+    stmts = []
+    while s.peek().kind != "DEDENT":
+        if s.peek().kind == "EOF":
+            raise EmmSyntaxError("unexpected end of input inside block")
+        stmts.append(_statement(s))
+    s.expect("DEDENT")
+    if not stmts:
+        raise EmmSyntaxError("block must contain at least one statement")
+    return stmts
+
+
+def _params(s: _Stream):
+    if s.peek().kind == "NOTHING_PARAMS":
+        s.next()
+        return []
+    params = []
+    name = s.expect("IDENT").value
+    default = None
+    if s.peek().kind == "DEFAULTING_TO":
+        s.next()
+        default = _expression(s)
+    params.append((name, default))
+    while s.peek().kind == "COMMA":
+        s.next()
+        name = s.expect("IDENT").value
+        default = None
+        if s.peek().kind == "DEFAULTING_TO":
+            s.next()
+            default = _expression(s)
+        params.append((name, default))
+    return params
+
+
+# --- Expressions ---------------------------------------------------------
+
+def _expression(s: _Stream):
+    # Prefix `not`: binds a single operand; cannot combine with infix unless
+    # grouped (spec §4.3).
+    if s.peek().kind == "OP" and s.peek().value == "not":
+        s.next()
+        operand = _operand(s)
+        node = UnaryOp("not", operand)
+        if s.peek().kind == "OP":
+            raise EmmSyntaxError(
+                f"line {s.peek().line}: result of 'not' must be grouped to "
+                f"combine with operator {s.peek().value!r}")
+        return node
+
+    left = _operand(s)
+    if s.peek().kind != "OP":
+        return left
+
+    op = s.peek().value
+    if op == "not":
+        raise EmmSyntaxError(
+            f"line {s.peek().line}: unexpected 'not' in infix position")
+    node = left
+    while s.peek().kind == "OP":
+        cur = s.peek().value
+        if cur == "not":
+            raise EmmSyntaxError(
+                f"line {s.peek().line}: unexpected 'not' in infix position")
+        if cur != op:
+            raise EmmSyntaxError(
+                f"line {s.peek().line}: mixed operators {op!r} and {cur!r} "
+                f"require explicit grouping")
+        s.next()
+        right = _operand(s)
+        node = BinOp(op, node, right)  # left-associative
+    return node
+
+
+def _operand(s: _Stream):
+    tok = s.peek()
+    kind = tok.kind
+    if kind == "NUMBER":
+        s.next()
+        return Num(tok.value)
+    if kind == "STRING":
+        s.next()
+        return Str(tok.value)
+    if kind == "TRUE":
+        s.next()
+        return Bool(True)
+    if kind == "FALSE":
+        s.next()
+        return Bool(False)
+    if kind == "NONE":
+        s.next()
+        return NoneLit()
+    if kind == "SLOT":
+        s.next()
+        return LlmSlot(tok.value)
+    if kind == "IDENT":
+        s.next()
+        return Var(tok.value)
+    if kind == "LCALL":
+        return _call(s)
+    if kind == "LANGLE":
+        return _list(s)
+    if kind == "LBRACE":
+        return _dict(s)
+    if kind == "LPAREN":
+        # Grouping: a '(' not immediately following ']]' opens a group.
+        s.next()
+        inner = _expression(s)
+        s.expect("RPAREN")
+        return Group(inner)
+    if kind == "OP" and tok.value == "not":
+        raise EmmSyntaxError(
+            f"line {tok.line}: 'not' result must be grouped to be used here")
+    raise EmmSyntaxError(
+        f"line {tok.line}: expected an operand, got {kind} ({tok.value!r})")
+
+
+def _call(s: _Stream):
+    s.expect("LCALL")
+    name = s.expect("IDENT").value
+    s.expect("RCALL")
+    s.expect("LPAREN")  # call args: '(' immediately follows ']]'
+    args = []
+    if s.peek().kind != "RPAREN":
+        args.append(_expression(s))
+        while s.peek().kind == "COMMA":
+            s.next()
+            args.append(_expression(s))
+    s.expect("RPAREN")
+    return Call(name, args)
+
+
+def _list(s: _Stream):
+    s.expect("LANGLE")
+    items = []
+    if s.peek().kind != "RANGLE":
+        items.append(_expression(s))
+        while s.peek().kind == "COMMA":
+            s.next()
+            items.append(_expression(s))
+    s.expect("RANGLE")
+    return ListLit(items)
+
+
+def _dict(s: _Stream):
+    s.expect("LBRACE")
+    entries = []
+    if s.peek().kind != "RBRACE":
+        key = _expression(s)
+        s.expect("COLON")
+        val = _expression(s)
+        entries.append((key, val))
+        while s.peek().kind == "COMMA":
+            s.next()
+            key = _expression(s)
+            s.expect("COLON")
+            val = _expression(s)
+            entries.append((key, val))
+    s.expect("RBRACE")
+    return DictLit(entries)

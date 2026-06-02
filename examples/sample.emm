@@ -1,0 +1,2 @@
+Set result to [[fibonacci]]( {{the first prime number greater than 5}} ).
+Do [[print]](result).
