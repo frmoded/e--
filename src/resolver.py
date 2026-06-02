@@ -81,17 +81,35 @@ def make_anthropic_resolver(cache_path: str = ".emm_cache.json",
                 raise EmmResolveError(
                     "set ANTHROPIC_API_KEY to resolve {{ }} slots "
                     f"(no cached value for: {text!r})")
-            import anthropic  # lazy: only needed on a live cache miss
+            try:
+                import anthropic  # lazy: only needed on a live cache miss
+            except ImportError as exc:
+                raise EmmResolveError(
+                    "the 'anthropic' package is required to resolve {{ }} "
+                    "slots but is not installed. Run: "
+                    "pip install -r requirements.txt") from exc
             c = anthropic.Anthropic(api_key=api_key)
             state["client"] = c
 
-        response = c.messages.create(
-            model=model,
-            max_tokens=256,
-            temperature=0,
-            system=_SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": text}],
-        )
+        try:
+            response = c.messages.create(
+                model=model,
+                max_tokens=256,
+                temperature=0,
+                system=_SYSTEM_PROMPT,
+                messages=[{"role": "user", "content": text}],
+            )
+        except Exception as exc:  # SDK / transport / auth errors
+            name = type(exc).__name__
+            if "Authentication" in name or "invalid x-api-key" in str(exc):
+                raise EmmResolveError(
+                    f"Anthropic rejected the API key (authentication error) "
+                    f"while resolving slot {text!r}. Check that "
+                    f"ANTHROPIC_API_KEY is a valid, current key with no extra "
+                    f"quotes or whitespace. Original error: {exc}") from exc
+            raise EmmResolveError(
+                f"LLM call failed while resolving slot {text!r}: "
+                f"{name}: {exc}") from exc
         raw = response.content[0].text
         expr = _strip_fences(raw)
 

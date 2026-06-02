@@ -41,6 +41,29 @@ class RaisingClient:
         raise AssertionError("client must not be called on a cache hit")
 
 
+class _FakeAuthenticationError(Exception):
+    """Stands in for anthropic.AuthenticationError (matched by class name)."""
+
+    def __init__(self):
+        super().__init__("Error code: 401 - invalid x-api-key")
+
+
+class AuthErrorClient:
+    def __init__(self):
+        self.messages = self
+
+    def create(self, **kwargs):
+        raise _FakeAuthenticationError()
+
+
+class GenericApiErrorClient:
+    def __init__(self):
+        self.messages = self
+
+    def create(self, **kwargs):
+        raise RuntimeError("connection reset")
+
+
 class TestResolver(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -93,6 +116,20 @@ class TestResolver(unittest.TestCase):
             with self.assertRaises(EmmResolveError) as ctx:
                 resolve(PRIMES_PHRASE)
         self.assertIn("ANTHROPIC_API_KEY", str(ctx.exception))
+
+    def test_auth_error_wrapped(self):
+        resolve = make_anthropic_resolver(
+            cache_path=self.cache_path, client=AuthErrorClient())
+        with self.assertRaises(EmmResolveError) as ctx:
+            resolve(PRIMES_PHRASE)
+        self.assertIn("authentication", str(ctx.exception).lower())
+
+    def test_generic_api_error_wrapped(self):
+        resolve = make_anthropic_resolver(
+            cache_path=self.cache_path, client=GenericApiErrorClient())
+        with self.assertRaises(EmmResolveError) as ctx:
+            resolve(PRIMES_PHRASE)
+        self.assertIn("connection reset", str(ctx.exception))
 
     def test_end_to_end_transpile_with_cache(self):
         self._write_cache({PRIMES_PHRASE: "[2, 3, 5, 7, 11]"})
