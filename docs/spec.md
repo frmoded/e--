@@ -1,6 +1,6 @@
 # E-- (English--) — Language Specification
 
-**Version:** 0.1 (draft)
+**Version:** 0.1.2 (draft)
 **Status:** design — no implementation yet
 **License:** Apache 2.0
 
@@ -103,12 +103,14 @@ Design notes:
 An **expression** produces a value. The grammar is recursive:
 
 ```
-expression  := literal
+expression  := operand
+             | infix-chain
+operand      := literal
              | variable
              | call
              | llm-slot
-             | infix-chain
              | collection
+             | group
 literal      := number | string | True | False | Nothing
 variable     := bare-word
 call         := "[[" name "]]" "(" arg-list? ")"
@@ -118,8 +120,15 @@ collection   := list | dict
 list         := "<" ( expression ( "," expression )* )? ">"
 dict         := "{" ( entry ( "," entry )* )? "}"
 entry        := expression ":" expression
-infix-chain  := expression infix-op expression
+group        := "(" expression ")"
+infix-chain  := operand infix-op operand ( infix-op operand )*   ; one operator only — see §4.3
 ```
+
+**Grouping vs. call parentheses.** A `(` means *call arguments* only when it
+immediately follows a `]]` (i.e. `[[name]]( ... )`). A `(` in any other position
+is **grouping** — `( expression )` — exactly as Python overloads parentheses.
+The parser distinguishes the two by whether the `(` directly follows the call
+marker.
 
 ### 4.1 Function calls (Option 2: arguments are expressions)
 
@@ -149,23 +158,74 @@ h(f(x), g(y))     →   [[h]]([[f]](x), [[g]](y))
 The parser is plain recursive descent; no heuristic is needed to find argument
 boundaries because every call delimits its own argument list with `( )`.
 
-### 4.3 Infix operators
+### 4.3 Infix operators and grouping (no precedence — explicit grouping on mix)
 
-Arithmetic and comparison may be written as infix English operator chains. (The
-exact operator vocabulary and precedence table is an open item — see §8.)
-Indicative forms:
+Operators are written as infix English. The canonical vocabulary (v1):
 
 ```
-a plus b                a + b
-a minus b               a - b
-a times b               a * b
-a is greater than b     a > b
-a is less than b        a < b
-a equals b              a == b
+arithmetic:   a plus b            a + b
+              a minus b           a - b
+              a times b           a * b
+              a divided by b      a / b
+              a modulo b          a % b
+              a to the power of b a ** b
+comparison:   a is greater than b a > b
+              a is less than b    a < b
+              a is at least b     a >= b
+              a is at most b      a <= b
+              a equals b          a == b
+              a does not equal b  a != b
+boolean:      a and b             a and b
+              a or b              a or b
+              not a               not a       (prefix; applies to the operand to its right)
+membership:   a is in b           a in b
+              a is not in b       a not in b
 ```
 
-Operators and function calls may be freely mixed; an operand may be any
-expression, including a call or an LLM slot.
+**No operator precedence. Grouping is mandatory when operators are mixed.**
+E-- deliberately has **no precedence table** — the language's promise is that a
+reader never has to recall hidden binding rules. The rule is:
+
+1. A flat chain of **one and the same** operator needs no grouping:
+   `a plus b plus c`, `a and b and c`.
+2. **Mixing two different operators in one expression is a syntax error** unless
+   the intent is made explicit with grouping parentheses `( … )`.
+
+Examples:
+
+```
+2 plus 3 times 4              →  SYNTAX ERROR (ambiguous: which binds first?)
+(2 plus 3) times 4           →  (2 + 3) * 4   = 20
+2 plus (3 times 4)           →  2 + (3 * 4)   = 14
+
+a and b or c                 →  SYNTAX ERROR
+(a and b) or c               →  (a and b) or c
+a and (b or c)               →  a and (b or c)
+
+(a is greater than b) and (c is less than d)   →  (a > b) and (c < d)
+```
+
+`not` is prefix and binds only to the single operand immediately to its right;
+combining its result with another operator still requires grouping:
+
+```
+not a equals b               →  SYNTAX ERROR
+(not a) equals b             →  (not a) == b
+not (a equals b)             →  not (a == b)
+```
+
+Operands may be any expression — a literal, variable, call, LLM slot, list/dict,
+or a parenthesized group — so operators, calls, and `{{ }}` slots compose freely
+as long as mixed operators are grouped:
+
+```
+[[score]](x) plus 1                          score(x) + 1
+({{the base rate}} times count) plus offset  (<llm> * count) + offset
+```
+
+The deterministic consequence: the parser never guesses binding. Either an
+expression is an unambiguous single-operator chain, or it is fully parenthesized,
+or it is rejected.
 
 ### 4.4 LLM value slots `{{ ... }}`
 
@@ -245,6 +305,47 @@ membership is determined by indentation depth exactly as in Python; there are no
 explicit block-delimiter tokens. This maps one-to-one onto the Python target and
 keeps canonical E-- visually aligned with its output.
 
+### 5.2 Function definitions
+
+```
+Define [[name]] taking <params>:
+    <body>
+```
+
+- **Parameters** are bare names, comma-separated: `taking a, b, c`.
+- **Zero parameters** are written explicitly as `taking nothing`:
+
+  ```
+  Define [[banner]] taking nothing:        def banner():
+      Do [[print]]("===").                     print("===")
+  ```
+
+- **Default values** use `defaulting to <expr>` after a parameter:
+
+  ```
+  Define [[greet]] taking name defaulting to "world":
+      Do [[print]](name).
+  ```
+  →
+  ```python
+  def greet(name="world"):
+      print(name)
+  ```
+
+  Parameters with defaults follow the same ordering constraint as Python
+  (defaulted parameters come after non-defaulted ones).
+
+- **Body** is an indented block (§5.1). **Return** is `Give back <expr>.`;
+  falling off the end returns `None`, as in Python.
+
+Note the deliberate asymmetry: parameters in a *definition* are plain names,
+while arguments in a *call* are full expressions (`[[f]](a, b plus 1)`). This
+mirrors Python's own `def f(a, b)` vs. `f(a, b + 1)` split.
+
+**Deferred to a later clause** (not in v1): variadic parameters (`*args` /
+`**kwargs`), keyword-only parameters, type hints / annotations, nested function
+definitions, and decorators. See §8.
+
 ---
 
 ## 6. Literals and collections
@@ -291,11 +392,11 @@ print(result)
 
 ## 8. Open questions
 
-- **Operator vocabulary and precedence.** Finalize the canonical infix operator
-  set and a precedence table, or require explicit grouping for all mixed-operator
-  expressions.
 - **Extended verb set.** `break`, `continue`, `import`, exception handling,
   classes — added as future verbs.
+- **Extended function features.** Variadic params (`*args` / `**kwargs`),
+  keyword-only params, type hints / annotations, nested function definitions,
+  decorators (see §5.2).
 - **Constant vs. variable distinction.** Whether a dedicated marker for named
   constants is warranted, or `UPPER_CASE` convention suffices.
 - **Normalizer canonicalization guarantees.** How strictly the normalizer must
@@ -306,6 +407,13 @@ print(result)
 
 ## Changelog
 
+- **0.1.2** — Operators finalized (§4.3): canonical infix vocabulary
+  (arithmetic, comparison, boolean, membership) with **no precedence** —
+  mixing different operators requires explicit grouping `( )`, else syntax
+  error. Added grouping to the grammar (§4) and the call-paren-vs-grouping
+  disambiguation rule. Function definitions finalized (§5.2): `taking nothing`
+  for zero params, `defaulting to <expr>` for defaults; variadic/keyword-only/
+  type-hints/nested-defs/decorators deferred. Operator open question resolved.
 - **0.1.1** — Block delimitation decided: significant indentation, Python-style
   (§5.1); removed from open questions.
 - **0.1** — Initial draft. Architecture, determinism contract, transpile-time-
