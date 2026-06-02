@@ -71,6 +71,9 @@ def main(argv=None) -> int:
     parser.add_argument(
         "--run", action="store_true",
         help="execute the generated Python after transpiling")
+    parser.add_argument(
+        "-s", "--show", action="store_true",
+        help="print the generated Python (even when --run is used)")
     args = parser.parse_args(sys.argv[1:] if argv is None else argv)
 
     # Read the source file with friendly errors (no raw traceback).
@@ -102,9 +105,19 @@ def main(argv=None) -> int:
     if args.out:
         with open(args.out, "w", encoding="utf-8") as fh:
             fh.write(python_src + "\n")
-    if args.run:
+
+    if args.run and args.show:
+        # Show the code and run it, separated by copy-pasteable comment lines.
+        print("# --- generated Python ---")
+        print(python_src)
+        print("# --- output ---")
         exec(compile(python_src, "<emm>", "exec"), {"__name__": "__main__"})
-    if not args.out and not args.run:
+    elif args.run:
+        exec(compile(python_src, "<emm>", "exec"), {"__name__": "__main__"})
+    elif args.show:
+        print(python_src)
+    elif not args.out:
+        # Default (no --run / --show / -o): print the generated Python.
         print(python_src)
     return 0
 

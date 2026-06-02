@@ -367,6 +367,35 @@ class TestCliRunner(unittest.TestCase):
         self.assertIn("error", proc.stderr.lower())
         self.assertNotIn("Traceback", proc.stderr)
 
+    def test_cli_run_show_prints_code_then_output(self):
+        try:
+            proc = subprocess.run(
+                [sys.executable, _CLI, _DESCRIBE_EMM, "--run", "--show"],
+                capture_output=True, text=True, cwd=_REPO_ROOT)
+        except OSError as exc:
+            self.skipTest(f"cannot spawn subprocess: {exc}")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        out = proc.stdout
+        self.assertIn("def describe(n):", out)
+        self.assertIn("# --- output ---", out)
+        # Generated Python appears before the program output.
+        self.assertLess(
+            out.index("def describe(n):"), out.index("# --- output ---"))
+        tail = out.split("# --- output ---", 1)[1]
+        self.assertEqual(tail.strip().splitlines(), ["small", "big", "small"])
+
+    def test_cli_show_alone_does_not_run(self):
+        try:
+            proc = subprocess.run(
+                [sys.executable, _CLI, _DESCRIBE_EMM, "--show"],
+                capture_output=True, text=True, cwd=_REPO_ROOT)
+        except OSError as exc:
+            self.skipTest(f"cannot spawn subprocess: {exc}")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        # No --run: output is exactly the generated Python, nothing executed.
+        self.assertEqual(proc.stdout.strip(), DESCRIBE_PY.strip())
+        self.assertNotIn("# --- output ---", proc.stdout)
+
 
 if __name__ == "__main__":
     unittest.main()

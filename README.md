@@ -90,6 +90,31 @@ big
 small
 ```
 
+See the generated Python **and** run it in one go with `--show` (alias `-s`):
+
+```
+python3 src/transpiler.py examples/describe.emm --run --show
+```
+
+prints the code and its output, separated by comment lines:
+
+```
+# --- generated Python ---
+def describe(n):
+    if n > 10:
+        return "big"
+    return "small"
+for n in [3, 42, 7]:
+    print(describe(n))
+# --- output ---
+small
+big
+small
+```
+
+The delimiters are Python comments, so the whole block stays copy-pasteable.
+`--show` on its own (without `--run`) just prints the Python, like the default.
+
 Notes:
 
 - The `.emm` extension is the convention for E-- source files.
