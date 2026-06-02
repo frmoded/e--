@@ -1,6 +1,6 @@
 # E-- (English--) — Language Specification
 
-**Version:** 0.1.2 (draft)
+**Version:** 0.1.3 (draft)
 **Status:** design — no implementation yet
 **License:** Apache 2.0
 
@@ -205,13 +205,23 @@ a and (b or c)               →  a and (b or c)
 (a is greater than b) and (c is less than d)   →  (a > b) and (c < d)
 ```
 
-`not` is prefix and binds only to the single operand immediately to its right;
-combining its result with another operator still requires grouping:
+`not` is prefix and binds only to the single operand immediately to its right.
+Combining its result with an infix operator still requires grouping, and the
+rule is **symmetric** — `not` may not sit on *either* side of an infix operator
+without grouping. (Allowing bare `not` next to an infix operator would assert a
+precedence of `not` over that operator, which the no-precedence rule forbids;
+this also matches Python, which rejects `a == not b`.) A bare `not x` standing
+alone, with no surrounding infix operator, needs no grouping.
 
 ```
-not a equals b               →  SYNTAX ERROR
+not a equals b               →  SYNTAX ERROR   (not on the left, ungrouped)
 (not a) equals b             →  (not a) == b
 not (a equals b)             →  not (a == b)
+
+a equals not b               →  SYNTAX ERROR   (not on the right, ungrouped)
+a equals (not b)             →  a == (not b)
+
+not a                        →  not a          (standalone — no grouping needed)
 ```
 
 Operands may be any expression — a literal, variable, call, LLM slot, list/dict,
@@ -276,6 +286,8 @@ Set <var> to <expr>.            assignment            v = f(3, 2)
 Do <call>.                      call, result discarded print(x)
 Give back <expr>.               return                 return expr
 If <cond>: ...                  conditional            if cond:
+Otherwise if <cond>: ...        else-if branch         elif cond:
+Otherwise: ...                  else branch            else:
 While <cond>: ...               loop                   while cond:
 For each <var> in <expr>: ...   loop                   for v in expr:
 Define [[f]] taking a, b: ...   function definition    def f(a, b):
@@ -305,7 +317,44 @@ membership is determined by indentation depth exactly as in Python; there are no
 explicit block-delimiter tokens. This maps one-to-one onto the Python target and
 keeps canonical E-- visually aligned with its output.
 
-### 5.2 Function definitions
+### 5.2 Conditionals (`If` / `Otherwise if` / `Otherwise`)
+
+An `If` block may be followed by zero or more `Otherwise if <cond>:` branches and
+an optional final `Otherwise:` branch. The continuation keywords sit at the **same
+indentation as their `If`** and each own an indented block. This maps directly
+onto Python `if` / `elif` / `else`.
+
+```
+If score is at least 90:
+    Set grade to "A".
+Otherwise if score is at least 80:
+    Set grade to "B".
+Otherwise if score is at least 70:
+    Set grade to "C".
+Otherwise:
+    Set grade to "F".
+```
+→
+```python
+if score >= 90:
+    grade = "A"
+elif score >= 80:
+    grade = "B"
+elif score >= 70:
+    grade = "C"
+else:
+    grade = "F"
+```
+
+Rules:
+
+- `Otherwise if` / `Otherwise` are only valid immediately following an `If` (or a
+  preceding `Otherwise if`) at matching indentation. A dangling `Otherwise` with
+  no governing `If` is a syntax error.
+- At most one `Otherwise:` per `If` chain, and it must come last.
+- Each branch body is an indented block (§5.1) with at least one statement.
+
+### 5.3 Function definitions
 
 ```
 Define [[name]] taking <params>:
@@ -396,7 +445,7 @@ print(result)
   classes — added as future verbs.
 - **Extended function features.** Variadic params (`*args` / `**kwargs`),
   keyword-only params, type hints / annotations, nested function definitions,
-  decorators (see §5.2).
+  decorators (see §5.3).
 - **Constant vs. variable distinction.** Whether a dedicated marker for named
   constants is warranted, or `UPPER_CASE` convention suffices.
 - **Normalizer canonicalization guarantees.** How strictly the normalizer must
@@ -407,6 +456,10 @@ print(result)
 
 ## Changelog
 
+- **0.1.3** — `not` rule made symmetric (§4.3): `not` may not sit on either side
+  of an infix operator without grouping. Added conditionals (§5.2): `Otherwise
+  if <cond>:` → `elif`, `Otherwise:` → `else`, attached to a governing `If` at
+  matching indentation. Function definitions renumbered §5.2 → §5.3.
 - **0.1.2** — Operators finalized (§4.3): canonical infix vocabulary
   (arithmetic, comparison, boolean, membership) with **no precedence** —
   mixing different operators requires explicit grouping `( )`, else syntax
