@@ -27,6 +27,8 @@ _KEYWORDS = {
     ("Do",): "DO",
     ("Give", "back"): "GIVEBACK",
     ("If",): "IF",
+    ("Otherwise", "if"): "OTHERWISE_IF",
+    ("Otherwise",): "OTHERWISE",
     ("While",): "WHILE",
     ("For", "each"): "FOREACH",
     ("in",): "IN",

@@ -97,7 +97,9 @@ class Return:
 @dataclass
 class If:
     cond: object
-    body: list  # list of statement nodes
+    body: list  # list of statement nodes (the governing If branch)
+    elifs: list = field(default_factory=list)  # list of (cond, body) tuples
+    else_body: Optional[list] = None  # statement list, or None if no else
 
 
 @dataclass

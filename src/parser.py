@@ -80,7 +80,32 @@ def _statement(s: _Stream):
         cond = _expression(s)
         s.expect("COLON")
         body = _block(s)
-        return If(cond, body)
+        elifs = []
+        while s.peek().kind == "OTHERWISE_IF":
+            s.next()
+            elif_cond = _expression(s)
+            s.expect("COLON")
+            elif_body = _block(s)
+            elifs.append((elif_cond, elif_body))
+        else_body = None
+        if s.peek().kind == "OTHERWISE":
+            s.next()
+            s.expect("COLON")
+            else_body = _block(s)
+            nxt = s.peek().kind
+            if nxt == "OTHERWISE":
+                raise EmmSyntaxError(
+                    f"line {s.peek().line}: at most one 'Otherwise' per 'If' "
+                    f"chain")
+            if nxt == "OTHERWISE_IF":
+                raise EmmSyntaxError(
+                    f"line {s.peek().line}: 'Otherwise if' cannot follow "
+                    f"'Otherwise' ('Otherwise' must be last)")
+        return If(cond, body, elifs, else_body)
+    if kind in ("OTHERWISE", "OTHERWISE_IF"):
+        tok = s.peek()
+        raise EmmSyntaxError(
+            f"line {tok.line}: '{tok.value}' without a matching 'If'")
     if kind == "WHILE":
         s.next()
         cond = _expression(s)

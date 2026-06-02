@@ -53,8 +53,15 @@ def _emit_stmt(stmt, level, resolve_slot):
     if isinstance(stmt, Return):
         return [f"{pad}return {_emit_expr(stmt.value, resolve_slot)}"]
     if isinstance(stmt, If):
-        head = f"{pad}if {_emit_expr(stmt.cond, resolve_slot)}:"
-        return [head] + _emit_body(stmt.body, level + 1, resolve_slot)
+        lines = [f"{pad}if {_emit_expr(stmt.cond, resolve_slot)}:"]
+        lines += _emit_body(stmt.body, level + 1, resolve_slot)
+        for elif_cond, elif_body in stmt.elifs:
+            lines.append(f"{pad}elif {_emit_expr(elif_cond, resolve_slot)}:")
+            lines += _emit_body(elif_body, level + 1, resolve_slot)
+        if stmt.else_body is not None:
+            lines.append(f"{pad}else:")
+            lines += _emit_body(stmt.else_body, level + 1, resolve_slot)
+        return lines
     if isinstance(stmt, While):
         head = f"{pad}while {_emit_expr(stmt.cond, resolve_slot)}:"
         return [head] + _emit_body(stmt.body, level + 1, resolve_slot)

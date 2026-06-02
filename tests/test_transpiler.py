@@ -173,6 +173,137 @@ class TestDefine(unittest.TestCase):
         self.assertEqual(t(src), expected)
 
 
+class TestConditionals(unittest.TestCase):
+    def test_if_else(self):
+        src = (
+            "If a is greater than b:\n"
+            "    Do [[print]](a).\n"
+            "Otherwise:\n"
+            "    Do [[print]](b).\n"
+        )
+        expected = (
+            "if a > b:\n"
+            "    print(a)\n"
+            "else:\n"
+            "    print(b)"
+        )
+        self.assertEqual(t(src), expected)
+
+    def test_if_elif_else(self):
+        src = (
+            "If a is greater than b:\n"
+            "    Do [[print]](a).\n"
+            "Otherwise if a is less than b:\n"
+            "    Do [[print]](b).\n"
+            "Otherwise:\n"
+            "    Do [[print]](c).\n"
+        )
+        expected = (
+            "if a > b:\n"
+            "    print(a)\n"
+            "elif a < b:\n"
+            "    print(b)\n"
+            "else:\n"
+            "    print(c)"
+        )
+        self.assertEqual(t(src), expected)
+
+    def test_multiple_elif_no_else(self):
+        src = (
+            "If x is at least 90:\n"
+            "    Set g to \"A\".\n"
+            "Otherwise if x is at least 80:\n"
+            "    Set g to \"B\".\n"
+            "Otherwise if x is at least 70:\n"
+            "    Set g to \"C\".\n"
+        )
+        expected = (
+            "if x >= 90:\n"
+            "    g = \"A\"\n"
+            "elif x >= 80:\n"
+            "    g = \"B\"\n"
+            "elif x >= 70:\n"
+            "    g = \"C\""
+        )
+        self.assertEqual(t(src), expected)
+
+    def test_spec_grade_example(self):
+        src = (
+            "If score is at least 90:\n"
+            "    Set grade to \"A\".\n"
+            "Otherwise if score is at least 80:\n"
+            "    Set grade to \"B\".\n"
+            "Otherwise if score is at least 70:\n"
+            "    Set grade to \"C\".\n"
+            "Otherwise:\n"
+            "    Set grade to \"F\".\n"
+        )
+        expected = (
+            "if score >= 90:\n"
+            "    grade = \"A\"\n"
+            "elif score >= 80:\n"
+            "    grade = \"B\"\n"
+            "elif score >= 70:\n"
+            "    grade = \"C\"\n"
+            "else:\n"
+            "    grade = \"F\""
+        )
+        self.assertEqual(t(src), expected)
+
+    def test_if_else_nested_in_for_each(self):
+        src = (
+            "For each n in items:\n"
+            "    If n is greater than 0:\n"
+            "        Do [[print]](n).\n"
+            "    Otherwise:\n"
+            "        Do [[print]](0).\n"
+        )
+        expected = (
+            "for n in items:\n"
+            "    if n > 0:\n"
+            "        print(n)\n"
+            "    else:\n"
+            "        print(0)"
+        )
+        self.assertEqual(t(src), expected)
+
+    def test_dangling_otherwise(self):
+        with self.assertRaises(EmmSyntaxError):
+            t("Otherwise:\n    Do [[print]](x).\n")
+
+    def test_dangling_otherwise_if(self):
+        with self.assertRaises(EmmSyntaxError):
+            t("Otherwise if a equals b:\n    Do [[print]](x).\n")
+
+    def test_otherwise_then_otherwise_if_rejected(self):
+        src = (
+            "If a equals b:\n"
+            "    Do [[print]](a).\n"
+            "Otherwise:\n"
+            "    Do [[print]](b).\n"
+            "Otherwise if a equals c:\n"
+            "    Do [[print]](c).\n"
+        )
+        with self.assertRaises(EmmSyntaxError):
+            t(src)
+
+    def test_two_otherwise_rejected(self):
+        src = (
+            "If a equals b:\n"
+            "    Do [[print]](a).\n"
+            "Otherwise:\n"
+            "    Do [[print]](b).\n"
+            "Otherwise:\n"
+            "    Do [[print]](c).\n"
+        )
+        with self.assertRaises(EmmSyntaxError):
+            t(src)
+
+    def test_plain_if_regression(self):
+        src = "If a is greater than b:\n    Do [[print]](a).\n"
+        self.assertEqual(t(src), "if a > b:\n    print(a)")
+
+
 class TestLlmSlots(unittest.TestCase):
     def test_slot_via_fake(self):
         src = ("Set v to [[fibonacci]]"
