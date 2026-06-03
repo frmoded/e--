@@ -118,10 +118,9 @@ The delimiters are Python comments, so the whole block stays copy-pasteable.
 Notes:
 
 - The `.emm` extension is the convention for E-- source files.
-- `{{ ... }}` LLM value slots are **not runnable yet** — resolving them needs a
-  language model, which is not wired up. A file containing a slot will report a
-  clear message rather than crash. The `examples/describe.emm` program uses no
-  slots, so `--run` works end to end with no model.
+- `{{ ... }}` LLM value slots **are** runnable — see "Resolving `{{ }}` slots"
+  below for the one-time setup. Files with no slots (like
+  `examples/describe.emm`) need no key and `--run` works with no model.
 
 ## Resolving `{{ }}` slots (LLM setup)
 
@@ -140,7 +139,7 @@ python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 
 # 3. set your Anthropic API key
-export ANTHROPIC_API_KEY=sk-ant-...
+export ANTHROPIC_API_KEY="sk-ant-..."
 
 # 4. transpile and run a slot example
 python3 src/transpiler.py examples/primes.emm --run
@@ -160,8 +159,9 @@ never touch the API.
 
 Early design. The language is specified in [`docs/spec.md`](docs/spec.md). The
 deterministic canonical-to-Python core (lexer, parser, emitter) is implemented
-with a runnable CLI — see "Running E--" above. The LLM normalizer (free English
-→ canonical) and real `{{ }}` slot resolution are not yet built.
+with a runnable CLI — see "Running E--" above — and `{{ }}` slot resolution is
+wired up (Anthropic Haiku + a committed cache; see "Resolving `{{ }}` slots").
+The LLM normalizer (free English → canonical) is not yet built.
 
 ## Using E-- in your own software
 
