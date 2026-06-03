@@ -155,13 +155,54 @@ Editing a slot's text is a cache miss and re-resolves; deleting the cache forces
 full re-resolution. Files without `{{ }}` slots (like `examples/describe.emm`)
 never touch the API.
 
+## Writing in free English
+
+You don't have to write canonical E-- by hand. The transpiler's first phase
+**normalizes** free-English E-- into canonical E-- with an LLM, then compiles
+the canonical form to Python — one input, two outputs. An English source
+(`examples/describe_en.en`) reads like prose:
+
+```
+Define a function called describe that takes a number n. If n is greater than
+ten, give back the string "big". Otherwise, give back the string "small".
+Then, for each n in the list 3, 42 and 7, print describe of n.
+```
+
+Normalize it to canonical and run the result, saving the canonical form too:
+
+```
+python3 src/transpiler.py examples/describe_en.en --canonical-out out.em --run
+```
+
+`out.em` holds the canonical E-- (equivalent to `examples/describe.emm`) and the
+program prints `small / big / small`.
+
+Two properties make this safe and cheap:
+
+- **The parser is the canonical-detector.** Whether a file "is already
+  canonical" is decided by trying to parse it deterministically — no LLM, no
+  heuristic. An **already-canonical file needs no API key**: normalization
+  short-circuits before any model call. Only genuinely English input hits the
+  model.
+- **Fixed point + cache.** Feeding the canonical output (`out.em`) back in
+  parses as canonical, so Phase 1 does nothing and reproduces the same outputs.
+  Normalizations are cached in a committed `.emm_norm_cache.json` (keyed by
+  source text), so re-running English input is an offline cache hit. Setup is
+  the same as for slots: `pip install -r requirements.txt` and
+  `export ANTHROPIC_API_KEY=...`.
+
+Normalization and `{{ }}` slot resolution are independent, separately cached LLM
+touchpoints — a canonical file with all slots cached makes **zero** live calls.
+
 ## Status
 
 Early design. The language is specified in [`docs/spec.md`](docs/spec.md). The
 deterministic canonical-to-Python core (lexer, parser, emitter) is implemented
 with a runnable CLI — see "Running E--" above — and `{{ }}` slot resolution is
 wired up (Anthropic Haiku + a committed cache; see "Resolving `{{ }}` slots").
-The LLM normalizer (free English → canonical) is not yet built.
+The LLM normalizer (free English → canonical) is wired up at whole-file
+granularity (see "Writing in free English"); per-region normalization is the
+next refinement.
 
 ## Using E-- in your own software
 

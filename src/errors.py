@@ -13,3 +13,13 @@ class EmmResolveError(Exception):
     valid Python expression.
     """
     pass
+
+
+class EmmNormalizeError(Exception):
+    """Raised when free-English E-- cannot be normalized to canonical.
+
+    Covers a missing API key on a cache miss and model output that does not
+    parse as canonical E-- (the normalizer validates by re-parsing and refuses
+    to accept un-parseable "canonical").
+    """
+    pass

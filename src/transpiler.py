@@ -26,8 +26,9 @@ import sys
 from lexer import tokenize
 from parser import parse
 from emitter import emit
-from errors import EmmSyntaxError, EmmResolveError
+from errors import EmmSyntaxError, EmmResolveError, EmmNormalizeError
 from resolver import make_anthropic_resolver
+from normalizer import make_normalizer
 
 
 def _default_resolver(text: str) -> str:
@@ -61,6 +62,9 @@ def main(argv=None) -> int:
     parser.add_argument(
         "-s", "--show", action="store_true",
         help="print the generated Python (even when --run is used)")
+    parser.add_argument(
+        "--canonical-out", metavar="FILE.em",
+        help="write the canonical E-- form (Phase 1 output) to FILE.em")
     args = parser.parse_args(sys.argv[1:] if argv is None else argv)
 
     # Read the source file with friendly errors (no raw traceback).
@@ -74,13 +78,28 @@ def main(argv=None) -> int:
         print(f"error: could not read {args.input}: {exc}", file=sys.stderr)
         return 2
 
-    # Real {{ }} resolver: cached + Anthropic-backed. Slot-free files never
-    # invoke it, so they transpile with no API key.
+    # Phase 1 — normalize free English -> canonical (cached, Anthropic-backed).
+    # Already-canonical input short-circuits before any client/key, so canonical
+    # files need no API key. Built lazily, like the resolver.
+    normalize = make_normalizer()
+    try:
+        canonical_src = normalize(source)
+    except EmmNormalizeError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    # Output A: the canonical E-- form.
+    if args.canonical_out:
+        with open(args.canonical_out, "w", encoding="utf-8") as fh:
+            fh.write(canonical_src.rstrip("\n") + "\n")
+
+    # Phase 2 — codegen. Real {{ }} resolver: cached + Anthropic-backed. Slot-free
+    # canonical never invokes it, so it transpiles with no API key.
     resolve = make_anthropic_resolver()
 
-    # Transpile with friendly errors.
+    # Transpile the canonical form with friendly errors.
     try:
-        python_src = transpile(source, resolve_slot=resolve)
+        python_src = transpile(canonical_src, resolve_slot=resolve)
     except EmmSyntaxError as exc:
         print(f"syntax error: {exc}", file=sys.stderr)
         return 1
@@ -88,6 +107,7 @@ def main(argv=None) -> int:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 
+    # Output B: Python.
     if args.out:
         with open(args.out, "w", encoding="utf-8") as fh:
             fh.write(python_src + "\n")
