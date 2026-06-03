@@ -100,6 +100,13 @@ Python; the caller decides what to keep, commit, edit, or feed back in (e.g.
 adopting the canonical output as the next input — the steady state is a caller
 choice, not a tool opinion).
 
+**Implementation staging.** The initial implementation detects and normalizes at
+**whole-file** granularity: parse the entire source; if it parses, it is
+canonical (no LLM); if not, normalize the whole source via the LLM (cached by
+source text). The **per-region** behavior above — passing canonical lines
+through untouched and normalizing only the English runs — is the target
+refinement, layered on later without changing this contract.
+
 ---
 
 ## 2. Canonical form principles
