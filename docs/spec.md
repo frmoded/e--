@@ -1,6 +1,6 @@
 # E-- (English--) — Language Specification
 
-**Version:** 0.1.4 (draft)
+**Version:** 0.1.6 (draft)
 **Status:** design — no implementation yet
 **License:** Apache 2.0
 
@@ -48,10 +48,57 @@ The LLM is called **only at transpile time** — never at runtime. Generated
 Python is always pure and contains no model calls. There are exactly two
 transpile-time LLM jobs:
 
-1. Normalizing free English → canonical E-- (§1, optional).
-2. Resolving `{{ ... }}` value slots into literals (§4.4).
+1. Normalizing free English → canonical E-- (§1.3).
+2. Resolving `{{ ... }}` value slots (§4.4).
 
 After transpiling, the produced Python is self-contained and deterministic.
+
+### 1.3 Integrated pipeline: one input, two outputs (decided 0.1.6)
+
+Normalization is **not a separate tool** — it is the first phase of transpile.
+The transpiler is a pure function from one input file to two outputs:
+
+```
+input (E--, anywhere on the English↔canonical spectrum)
+   │
+   ├─ Phase 1 — normalize (region by region):
+   │     try to parse each region as canonical (deterministic, no LLM)
+   │        parses  → keep as-is
+   │        fails   → English → normalize via LLM (cached) → canonical
+   │   ▶ output A: the canonical E-- form
+   │
+   └─ Phase 2 — codegen (canonical → Python):
+         deterministic, line-at-a-time, no LLM for structure
+         {{ }} slots resolved via LLM (cached, §4.4)
+       ▶ output B: Python
+```
+
+**The parser is the canonical-detector.** Whether a region is "already
+canonical" is decided by trying to parse it — no LLM, no heuristic. Canonical's
+rigid markers (`[[ ]]`, the fixed verbs) mean real English prose effectively
+never parses by accident, so a parse success reliably means "canonical." English
+regions (runs of non-parsing lines) are sent to the normalizer together, so
+multi-line English keeps the context it needs.
+
+**"Canonical" and "needs an LLM" are independent questions.** A `{{ }}` slot is
+valid canonical syntax: a slot-bearing file passes the canonical check and skips
+normalization, yet still needs an LLM call at codegen to resolve the slot. So the
+two LLM touchpoints are independent, and both are cached (freeze-by-cache):
+
+| Touchpoint | Fires on | Phase | Cached by |
+|---|---|---|---|
+| Normalize | non-canonical (English) regions | 1 | English region text → canonical |
+| Slot resolution | `{{ }}` slots | 2 | slot text → Python expression (§4.4.1) |
+
+A file that is already canonical with all slots cached makes **zero live LLM
+calls**. Feeding the canonical output (output A) back in is a **fixed point**: it
+parses as canonical, so Phase 1 does nothing and the same outputs are reproduced.
+
+**Workflow is the caller's responsibility.** The transpiler does not manage file
+names or the edit loop. It takes an input and produces the canonical form plus
+Python; the caller decides what to keep, commit, edit, or feed back in (e.g.
+adopting the canonical output as the next input — the steady state is a caller
+choice, not a tool opinion).
 
 ---
 
@@ -343,8 +390,18 @@ For each year in {{all 20th century prime years}}:
 
 **Blocks use significant indentation, Python-style** (decided 0.1.1). Block
 membership is determined by indentation depth exactly as in Python; there are no
-explicit block-delimiter tokens. This maps one-to-one onto the Python target and
-keeps canonical E-- visually aligned with its output.
+explicit block-delimiter tokens. Indentation/block structure maps one-to-one onto
+the Python target, keeping canonical E-- visually aligned with its output.
+
+**Statement-to-line mapping is 1:n, but local** (clarified 0.1.5). A single
+canonical statement transpiles to **one or more** Python lines — e.g. a `{{ }}`
+slot whose value is rendered across multiple lines. The count is not fixed at
+one. What *is* guaranteed is **locality**: a statement's emitted Python depends
+only on that statement and its indentation level, never on other lines. This is
+what lets canonical→Python codegen run **one canonical line at a time, with no
+LLM** — the n emitted lines are a contiguous block at one known indent. (Slots
+remain single *expressions*; 1:n refers to emission formatting, not to a slot
+introducing multiple statements.)
 
 ### 5.2 Conditionals (`If` / `Otherwise if` / `Otherwise`)
 
@@ -484,6 +541,16 @@ print(result)
 
 ## Changelog
 
+- **0.1.6** — Normalization integrated into transpile (§1.3): one input → two
+  outputs (canonical + Python). Parser-as-canonical-detector; English regions
+  normalized via LLM (cached), canonical regions pass through. Two independent,
+  cached LLM touchpoints (normalize, slot resolution); canonical+cached input →
+  zero live LLM calls; canonical output is a fixed point. Filenames/steady-state
+  are the caller's responsibility.
+- **0.1.5** — Clarified statement-to-Python mapping (§5.1): it is **1:n, but
+  local** (was loosely described as one-to-one). Locality — a statement's output
+  depends only on that statement and its indent — is what enables line-at-a-time,
+  no-LLM codegen.
 - **0.1.4** — `{{ }}` resolver specified (§4.4.2): Anthropic Haiku by default,
   returns a single Python expression (any expression, validated by `ast.parse`
   but not executed at transpile time), key via `ANTHROPIC_API_KEY`. Cache format
