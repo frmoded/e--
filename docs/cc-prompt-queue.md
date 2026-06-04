@@ -96,12 +96,13 @@ Body content stays per-change.
 
 **Always report** in the feedback file's §0: commit SHAs, pushed branches, tag names, GH release URLs.
 
-### Git state: report what `git` says, and pushing is the user's job (HARD RULE)
+### Git state: report what `git` says, and push when ready (HARD RULE)
 
 Two failures observed repeatedly in practice: (a) the "drained against" SHA reported from memory instead of from git, and (b) a failed `git push` misdiagnosed as a policy/harness block.
 
 - **Read git state, never recall it.** The §0 "drained against" SHA is `git rev-parse HEAD` at drain start. Ahead/behind is `git rev-list --count origin/<branch>..HEAD`. Report the command output, not an inference.
-- **The sandbox has no network.** `git push` and any remote fetch will fail from the CC sandbox — this is expected, NOT a harness or policy block; do not invent an explanation. Commit locally; report local HEAD and ahead/behind. **A failed push is never a drain failure.** Pushing to the remote is the user's job, from their own machine. Do not retry pushes.
+- **Push commits when ready.** Per the default-on git policy, when commits are ready, push them. On success, report the pushed branch and SHAs in §0.
+- **A failed push is not a drain failure.** If the environment has no network (the CC sandbox does not), the push will fail — expected, NOT a harness or policy block; do not invent an explanation and do not retry in a loop. Commit locally, report local HEAD and ahead/behind, and note the push could not complete so the user can finish it from their machine.
 
 ### No out-of-band commits (HARD RULE)
 
