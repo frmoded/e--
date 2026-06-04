@@ -328,13 +328,36 @@ def _call(s: _Stream):
     s.expect("RCALL")
     s.expect("LPAREN")  # call args: '(' immediately follows ']]'
     args = []
+    kwargs = []
     if s.peek().kind != "RPAREN":
-        args.append(_expression(s))
+        _arg(s, args, kwargs)
         while s.peek().kind == "COMMA":
             s.next()
-            args.append(_expression(s))
+            _arg(s, args, kwargs)
     s.expect("RPAREN")
-    return Call(name, args)
+    return Call(name, args, kwargs)
+
+
+def _arg(s: _Stream, args, kwargs):
+    """Parse one call argument into ``args`` (positional) or ``kwargs``.
+
+    Keyword vs positional is decided by two-token lookahead: an argument is a
+    keyword iff the current token is IDENT and the next is EQ. Ordering is
+    enforced — a positional argument may not follow a keyword argument
+    (spec §4.1).
+    """
+    tok = s.peek()
+    nxt = s.tokens[s.i + 1] if s.i + 1 < len(s.tokens) else None
+    is_keyword = (tok.kind == "IDENT" and nxt is not None and nxt.kind == "EQ")
+    if is_keyword:
+        kw_name = s.next().value   # IDENT
+        s.next()                   # EQ
+        kwargs.append((kw_name, _expression(s)))
+        return
+    if kwargs:
+        raise EmmSyntaxError(
+            f"line {tok.line}: positional argument after keyword argument")
+    args.append(_expression(s))
 
 
 def _list(s: _Stream):

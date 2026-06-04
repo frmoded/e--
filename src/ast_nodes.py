@@ -40,7 +40,8 @@ class Var:
 @dataclass
 class Call:
     name: str
-    args: list  # list of expression nodes
+    args: list  # positional expression nodes
+    kwargs: list = field(default_factory=list)  # list of (name: str, expr) tuples
 
 
 @dataclass

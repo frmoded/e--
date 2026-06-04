@@ -105,8 +105,9 @@ def _emit_expr(node, resolve_slot):
     if isinstance(node, Var):
         return node.name
     if isinstance(node, Call):
-        args = ", ".join(_emit_expr(a, resolve_slot) for a in node.args)
-        return f"{node.name}({args})"
+        parts = [_emit_expr(a, resolve_slot) for a in node.args]
+        parts += [f"{k}={_emit_expr(v, resolve_slot)}" for k, v in node.kwargs]
+        return f"{node.name}({', '.join(parts)})"
     if isinstance(node, ListLit):
         items = ", ".join(_emit_expr(i, resolve_slot) for i in node.items)
         return f"[{items}]"

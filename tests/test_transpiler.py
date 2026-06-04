@@ -16,6 +16,7 @@ def fake(text):
     """Fake slot resolver: known phrases -> Python literal text."""
     mapping = {
         "the first prime number greater than 5": "7",
+        "a calm blue": '"blue"',
     }
     if text in mapping:
         return mapping[text]
@@ -81,6 +82,47 @@ class TestCalls(unittest.TestCase):
     def test_call_nested(self):
         self.assertEqual(
             t("Set v to [[f]]([[g]](3), 2)."), "v = f(g(3), 2)")
+
+
+class TestKeywordArguments(unittest.TestCase):
+    def test_single_keyword(self):
+        self.assertEqual(t("Set v to [[f]](x=1)."), "v = f(x=1)")
+
+    def test_mixed_positional_then_keyword(self):
+        self.assertEqual(t("Set v to [[f]](a, x=1)."), "v = f(a, x=1)")
+
+    def test_multiple_keywords(self):
+        self.assertEqual(
+            t('Set c to [[major_chord]](root="C", inversion=2).'),
+            'c = major_chord(root="C", inversion=2)')
+
+    def test_keyword_value_nested_call(self):
+        self.assertEqual(
+            t("Set s to [[compose]](drums=[[shuffle]]())."),
+            "s = compose(drums=shuffle())")
+
+    def test_keyword_value_infix_chain(self):
+        self.assertEqual(
+            t("Set v to [[f]](n=a plus b)."), "v = f(n=a + b)")
+
+    def test_keyword_value_slot(self):
+        self.assertEqual(
+            t("Set v to [[plot]](color={{a calm blue}})."),
+            'v = plot(color="blue")')
+
+    def test_do_with_keywords(self):
+        self.assertEqual(
+            t("Do [[connect]](host, port=8080)."),
+            "connect(host, port=8080)")
+
+    def test_positional_after_keyword_raises(self):
+        with self.assertRaises(EmmSyntaxError):
+            t("Set v to [[f]](x=1, y).")
+
+    def test_bare_variable_positional_unaffected(self):
+        # A bare variable positional has no following '=', so the new lookahead
+        # leaves it a positional arg.
+        self.assertEqual(t("Set v to [[f]](x)."), "v = f(x)")
 
 
 class TestOperators(unittest.TestCase):

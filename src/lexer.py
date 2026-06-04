@@ -145,6 +145,7 @@ def _scan_line(text: str, lineno: int) -> list:
             "<": "LANGLE", ">": "RANGLE",
             "{": "LBRACE", "}": "RBRACE",
             ",": "COMMA", ":": "COLON", ".": "DOT",
+            "=": "EQ",
         }
         if ch in single:
             tokens.append(Token(single[ch], ch, lineno)); i += 1; continue
