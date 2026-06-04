@@ -1,6 +1,6 @@
 # E-- (English--) — Language Specification
 
-**Version:** 0.1.6 (draft)
+**Version:** 0.1.7 (draft)
 **Status:** design — no implementation yet
 **License:** Apache 2.0
 
@@ -168,7 +168,9 @@ operand      := literal
 literal      := number | string | True | False | Nothing
 variable     := bare-word
 call         := "[[" name "]]" "(" arg-list? ")"
-arg-list     := expression ( "," expression )*
+arg-list     := argument ( "," argument )*
+argument     := expression | keyword-arg          ; keyword args must follow positional ones — §4.1
+keyword-arg  := name "=" expression
 llm-slot     := "{{" free-text "}}"
 collection   := list | dict
 list         := "<" ( expression ( "," expression )* )? ">"
@@ -197,6 +199,35 @@ special-case machinery.
 [[add]](a, b)                           add(a, b)
 [[max]](<1, 2, 3>)                      max([1, 2, 3])
 ```
+
+**Keyword arguments** (added 0.1.7). An argument may also be a keyword argument
+`name = expression`, with **identical semantics and rules to Python**:
+
+- The keyword `name` is a bare identifier (the callee's parameter name), and the
+  value is any expression (literal, variable, nested call, `{{ }}` slot, list,
+  dict, group).
+- **Positional arguments must come before keyword arguments.** A positional
+  argument after a keyword argument is a syntax error (exactly as in Python).
+- A call may be all-positional, all-keyword, or mixed (positionals first).
+- The `=` token is otherwise unused in E-- (assignment is `Set … to …`, equality
+  is `equals`), so there is no ambiguity; keyword names mirror the bare parameter
+  names declared in `Define … taking …` (§5.3).
+
+```
+[[major_chord]](root="C", inversion=2)            major_chord(root="C", inversion=2)
+[[compose]](bars=12, key="E")                     compose(bars=12, key="E")
+[[connect]](host, port=8080)                      connect(host, port=8080)
+[[plot]](data, color={{a calm blue}})             plot(data, color=<llm>)
+[[connect]](port=8080, host)                       SYNTAX ERROR (positional after keyword)
+```
+
+This is the call shape consumers such as Forge depend on (a snippet call
+`[[snippet]](name=value, …)` whose keyword names map to the callee's declared
+inputs). It is **additive**: every existing positional-only call stays valid.
+
+Note: keyword arguments are call-site `name=value` only. Variadic unpacking
+(`*args` / `**kwargs`) at call sites remains deferred (§8), as does it for
+definitions (§5.3).
 
 ### 4.2 Nesting
 
@@ -548,6 +579,12 @@ print(result)
 
 ## Changelog
 
+- **0.1.7** — `additive:` Keyword arguments at call sites (§4.1): `name=expression`
+  with Python-identical semantics (positionals before keywords; mixed allowed).
+  Grammar `arg-list` gains `keyword-arg`. Forward-compatible — all existing
+  positional-only calls stay valid. Matches the call shape downstream consumers
+  (Forge B7.1) require. `*args`/`**kwargs` remain deferred (§8). Spec-only so far;
+  parser implementation pending a CC prompt.
 - **0.1.6** — Normalization integrated into transpile (§1.3): one input → two
   outputs (canonical + Python). Parser-as-canonical-detector; English regions
   normalized via LLM (cached), canonical regions pass through. Two independent,
