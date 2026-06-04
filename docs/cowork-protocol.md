@@ -70,6 +70,7 @@ The failing-test-first step is the load-bearing guarantee that (a) the bug is re
 - **Pure-core extraction.** When production code is tightly coupled to a runtime that tests can't reach (browser DOM, Obsidian API, Electron-only globals), extract the pure logic into a `*-core.ts` (or equivalent) module that the runtime-coupled file re-exports. Tests target the pure core; the coupled module stays a thin shim. This is the only sustainable way to keep `node --test` (or equivalent fast runners) viable as the codebase grows.
 - **No-op stays no-op.** Idempotent helpers (sync, refresh, dedupe) must include a test that calling them twice in a row produces no observable change after the second call. Catches regressions where a helper accidentally becomes stateful.
 - **Push every assertion into the suite up to the UI boundary.** Any check that can be expressed as an automated assertion (file presence, JSON shape, function output, byte counts) goes into the suite. Manual smoke is for what's left after the automated cliff — visual rendering, user input flows, runtime-only behaviors.
+- **External-service calls are faked in tests, never live.** Anything that hits a network API (LLM endpoints, HTTP services, paid SaaS) is exercised through an injected fake client plus temp on-disk state — never the real endpoint, in either the test suite or CC smoke. Three load-bearing reasons: the CC sandbox has no network, live calls spend the user's quota/keys, and a suite that depends on a model is non-deterministic. For a project consumed downstream for *reproducible* output (E-- inside Forge), "the suite never calls a live model" is a guarantee to the consumer, not a convenience. The live path is the user's to exercise manually with a key; the prompt's "user-required smoke" names it.
 
 ### Release-shipping prompts
 
@@ -100,9 +101,10 @@ After CC drains a prompt:
 
 1. Read the feedback file.
 2. Read the actual touched files (not just the diff snippets CC quoted).
-3. Compare against the prompt's intent.
-4. Form an independent interpretation.
-5. Report back, including disagreements with CC's framing.
+3. **Run your own probes.** Execute the changed code with inputs CC's tests did NOT cover — especially the behavior the prompt's tests assert. Reading catches false claims; probing catches overfit tests and "all green" that only passes its own fixtures. (This run's highest-value review steps were independent probes — byte-for-byte preservation checks, malformed-input robustness, cache-hit call-counting — none of which were in CC's suite, and they also exposed CC's incorrect "spec is uncommitted" claims.)
+4. Compare against the prompt's intent.
+5. Form an independent interpretation.
+6. Report back, including disagreements with CC's framing.
 
 **Cowork's value is the fresh take, not parroting CC's summary.** CC's feedback describes intent; reading the files describes reality. When CC's feedback claims success but the actual diff or test result tells a different story, say so directly — even when the feedback sounds confident.
 
@@ -134,6 +136,30 @@ Push back when you disagree. Don't soften to vagueness. Don't capitulate just be
 
 - **Cowork task lists are session-state, NOT durable.** Anything you want to survive a session restart — open audit items, deferred design decisions, polish backlog, follow-ups — gets written to a file on disk (e.g., `audit.md`, `backlog.md`). The in-session task tracker is for the current arc only.
 - **Spec docs are append-mostly, not rewrite.** When updating a spec, add a clause; don't restructure the existing prose unless a major version bump is explicitly happening. Diffs stay readable.
+- **Commit cowork-authored docs in the same turn you write them.** Spec / protocol / audit edits left uncommitted on disk are fragile — the CC sandbox and session restarts can strand them, and committed HEAD can silently lag the on-disk design (this run drifted two spec versions before an audit caught it). Edit, then commit; don't batch docs commits "for later."
+- **Generated-but-committed artifacts must be tracked.** Freeze/cache files meant to live in git (e.g. `.emm_cache.json`, `.emm_norm_cache.json`) repeatedly landed untracked. Prompts that produce such artifacts say "track and commit it," and review checks for untracked files that were supposed to be committed.
+
+## Downstream consumers (asymmetric coupling)
+
+E-- is a standalone language project. Other projects may consume E-- as a vendored upstream dependency — mirroring a curated subset of `e--/src/` into their own repo and using E-- as a deterministic English→Python compiler. The first known consumer is Forge (`~/projects/forge*/`, `~/projects/forge-moda-bootstrap/`), which is moving toward using E-- as the canonical form of its English snippet facet.
+
+**Coupling is one-directional.** Downstream consumers depend on E--; E-- never depends on them. E-- never imports from a consumer's codebase, never reads consumer-side test results, never accepts consumer-imposed design constraints. The implementation, spec, mission, release cadence, and protocol files in `e--/` are owned by E-- cowork alone.
+
+**E-- ships releases independently.** Releases are tagged in `e--/`'s git history with the version in `docs/spec.md`'s header line and recorded in the changelog at the bottom of `docs/spec.md`. Downstream consumers pin to specific versions and update when they choose; E-- does not coordinate release timing with consumers.
+
+**The Changelog is the stability contract.** `docs/spec.md`'s Changelog section is the canonical source for "what changed between version N and version N+1." Anything labeled **breaking** must be explicit — downstream consumers read this section before bumping their pin. Practical discipline:
+
+- Use `breaking:` prefix in changelog entries for any change that would require consumer-side code edits to keep working. Examples: marker syntax change, grammar restructure, builtin verb removal, default behavior flip.
+- Use `additive:` or unlabeled for forward-compatible changes (new verbs, new grammar productions that don't affect existing valid programs, performance improvements).
+- Use `deprecated:` for features marked for removal in a future release; downstream gets warning before the breaking change lands.
+
+**Downstream bug reports are accepted but not prioritized differently.** When the user ferries a bug report from a downstream session (e.g., "Forge integration found that the parser rejects this valid-looking E-- input"), it gets handled like any other bug report — TDD discipline, failing test first, fix in a CC prompt. No special "downstream queue" exists. The user is the channel; bugs arrive as user messages summarizing the downstream finding.
+
+If downstream bug reports become frequent enough to warrant durable capture, an `e--/docs/downstream-issues.md` file can be added (append-mostly, same shape as Forge's `forge-moda-bootstrap/e-minus-minus-feedback.md` shape). Not needed at current volume.
+
+**E-- cowork does NOT review downstream prompts.** When Forge cowork drafts an "integration prompt" (e.g., "bundle E-- into the engine, wire up `facet_form: canonical`"), that's Forge's CC drain in Forge's queue. E-- cowork doesn't see it, doesn't review it, doesn't owe approval. If the integration uses E-- in a way that triggers a real E-- bug, that surfaces as a bug report through the channel above.
+
+**Constitutional independence.** Forge has a constitution (`~/projects/forge/docs/specs/constitution.md`) with a Mission preamble + A/B/F/D/C series. E-- has its own spec (`docs/spec.md`). They are peers — neither imposes on the other. If E-- adopts a Mission or constructionist framing, that's a deliberate E-- design choice; Forge's framing does not propagate automatically. Pattern-borrowing across the protocols (e.g., E--'s spec adopting Forge's "append-mostly" discipline) is fine and encouraged where useful; rule-imposition is not.
 
 ## Staying in the strategic lane
 

@@ -41,10 +41,10 @@ Default structure (the prompt's §7 may override):
 
 ## §0. Drain metadata
 
-- Drained against commit: <SHA>
+- Drained against commit: <SHA — read with `git rev-parse HEAD` at drain start; do not recall or infer it>
 - Versions before/after (if any version bumps): manifest/package/etc. — was X, now Y
 - Test suite result: X/X in Y ms
-- Git ops: commits pushed (SHAs), tags created, releases cut
+- Git ops: commit SHAs created, tags, releases; local HEAD vs `origin/<branch>` (ahead/behind). A failed push is expected and not a problem — see the "Git state" hard rule.
 
 ## §1. Outcome
 
@@ -95,6 +95,21 @@ The prompt can override with explicit phrases like "leave uncommitted for review
 Body content stays per-change.
 
 **Always report** in the feedback file's §0: commit SHAs, pushed branches, tag names, GH release URLs.
+
+### Git state: report what `git` says, and pushing is the user's job (HARD RULE)
+
+Two failures observed repeatedly in practice: (a) the "drained against" SHA reported from memory instead of from git, and (b) a failed `git push` misdiagnosed as a policy/harness block.
+
+- **Read git state, never recall it.** The §0 "drained against" SHA is `git rev-parse HEAD` at drain start. Ahead/behind is `git rev-list --count origin/<branch>..HEAD`. Report the command output, not an inference.
+- **The sandbox has no network.** `git push` and any remote fetch will fail from the CC sandbox — this is expected, NOT a harness or policy block; do not invent an explanation. Commit locally; report local HEAD and ahead/behind. **A failed push is never a drain failure.** Pushing to the remote is the user's job, from their own machine. Do not retry pushes.
+
+### No out-of-band commits (HARD RULE)
+
+Every code commit traces to a staged prompt. If a fix is made outside a normal drain (an ad-hoc session, a quick follow-up), it STILL leaves a feedback note: write `prompts/feedback/<date>-<short-name>.md` describing what changed and why, with a commit header that names it. A commit with no feedback note erodes the load-bearing audit trail (cf. the `6b056c8` follow-up that had to be reconstructed retroactively).
+
+### Confirm queue + HEAD before draining (HARD RULE)
+
+Before draining, check `prompts/staged/` and `git log --oneline -3`. Do not act on a prompt that has already been drained — its commit is in the log and it has moved to `done/`. Queue and git state change between queue-time and drain-time; reconcile against reality first.
 
 ### Version-bump sanity check (HARD RULE)
 
