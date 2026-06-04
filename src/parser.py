@@ -9,6 +9,7 @@ operand and cannot combine with an infix operator unless grouped.
 from __future__ import annotations
 
 from errors import EmmSyntaxError
+from lexer import tokenize
 from ast_nodes import (
     Assign, Do, Return, If, While, ForEach, Define, Program,
     Num, Str, Bool, NoneLit, Var, Call, ListLit, DictLit, LlmSlot, Group,
@@ -134,6 +135,73 @@ def _statement(s: _Stream):
     raise EmmSyntaxError(
         f"line {tok.line}: expected a statement verb, got {tok.kind} "
         f"({tok.value!r})")
+
+
+def _statement_head(s: _Stream):
+    """Parse a single statement *or* block header, WITHOUT a following block.
+
+    Simple statements (``Set``/``Do``/``Give back``) are parsed through their
+    terminating ``.``; compound/continuation forms (``If``/``Otherwise if``/
+    ``Otherwise``/``While``/``For each``/``Define``) are parsed through their
+    ``:`` header only. Used by the single-line canonical detector — it never
+    consumes a block, so a header with no body still validates.
+    """
+    kind = s.peek().kind
+    if kind == "SET":
+        s.next(); s.expect("IDENT"); s.expect("TO"); _expression(s)
+        s.expect("DOT"); return
+    if kind == "DO":
+        s.next(); call = _operand(s)
+        if not isinstance(call, Call):
+            raise EmmSyntaxError("'Do' requires a call")
+        s.expect("DOT"); return
+    if kind == "GIVEBACK":
+        s.next(); _expression(s); s.expect("DOT"); return
+    if kind == "IF":
+        s.next(); _expression(s); s.expect("COLON"); return
+    if kind == "OTHERWISE_IF":
+        s.next(); _expression(s); s.expect("COLON"); return
+    if kind == "OTHERWISE":
+        s.next(); s.expect("COLON"); return
+    if kind == "WHILE":
+        s.next(); _expression(s); s.expect("COLON"); return
+    if kind == "FOREACH":
+        s.next(); s.expect("IDENT"); s.expect("IN"); _expression(s)
+        s.expect("COLON"); return
+    if kind == "DEFINE":
+        s.next(); s.expect("LCALL"); s.expect("IDENT"); s.expect("RCALL")
+        s.expect("TAKING"); _params(s); s.expect("COLON"); return
+    raise EmmSyntaxError(
+        f"not a canonical statement head: {s.peek().kind}")
+
+
+def is_canonical_statement_line(text: str) -> bool:
+    """True iff ``text`` is one valid canonical statement or block header.
+
+    Whitespace-insensitive (the line is stripped first), body-independent (a
+    block header with no body still counts), and **never raises** — any lexer
+    or parse error means "not canonical". Real English prose fails to match the
+    rigid verbs/markers and so classifies as non-canonical.
+    """
+    stripped = text.strip()
+    if not stripped:
+        return False
+    try:
+        tokens = tokenize(stripped)
+    except Exception:
+        return False
+    try:
+        s = _Stream(tokens)
+        _statement_head(s)
+        # Exactly one statement/header per line: only a trailing NEWLINE + EOF
+        # may remain.
+        if s.peek().kind == "NEWLINE":
+            s.next()
+        return s.peek().kind == "EOF"
+    except EmmSyntaxError:
+        return False
+    except Exception:
+        return False
 
 
 def _block(s: _Stream):

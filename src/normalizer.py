@@ -1,23 +1,31 @@
 """Phase 1 normalizer: free-English E-- -> canonical E-- (spec §1.3).
 
 `make_normalizer(...)` returns a `normalize(source) -> str` callable that turns
-a free-English (or mixed) E-- source into canonical E--, at **whole-file**
-granularity (the per-region refinement in §1.3 is a later layer):
+a free-English (or mixed) E-- source into canonical E-- at **per-region**
+granularity (the §1.3 target): canonical lines pass through byte-for-byte and
+only English runs hit the LLM.
 
-1. **Canonical detection (no LLM).** Try to ``parse(tokenize(source))`` with the
-   deterministic core. If it parses, the source is already canonical — return it
-   unchanged, no model call. The parser is the canonical-detector.
-2. **Cache hit.** Otherwise consult a committed JSON cache keyed by source text;
-   a hit returns the cached canonical string with no model call.
-3. **Cache miss.** Ask an Anthropic model (Haiku by default) — whose system
-   prompt embeds a concise canonical-E-- reference — for ONLY the canonical
-   program, strip defensive code fences, then **validate by re-parsing**. Output
-   that does not parse raises ``EmmNormalizeError`` (never silently accepted).
-   The validated canonical is cached and returned.
+1. **Fast path (no LLM).** If ``parse(tokenize(source))`` succeeds, the whole
+   source is already canonical — return it unchanged, no model call, no key.
+2. **Classify + group.** Split into physical lines; classify each non-blank line
+   as ``canonical`` or ``english`` with the single-line detector
+   (``is_canonical_statement_line``); blank lines are neutral and attach to the
+   current region. Group maximal consecutive runs of the same class into regions.
+3. **Resolve each region.** ``canonical`` regions emit verbatim. ``english``
+   regions are normalized via the LLM, **cached per region** (key = the region's
+   exact text). The model is asked for canonical at indentation level 0, then the
+   output is re-indented to the region's base indent so placement is
+   deterministic.
+4. **Stitch + validate.** Concatenate regions in order and ``parse(tokenize(...))``
+   the whole result; un-parseable output raises ``EmmNormalizeError`` (never
+   silently accepted).
 
-Like the resolver, the model call happens only on a cache miss and the Anthropic
-client is constructed lazily — so already-canonical input, cache hits, and the
-mock path need neither the ``anthropic`` package nor an API key.
+Like the resolver, model calls happen only on a cache miss and the Anthropic
+client is constructed lazily — so a fully-canonical file, a mixed file whose
+English regions are all cached, and the mock path need neither the ``anthropic``
+package nor an API key. The public ``make_normalizer``/``normalize`` contract is
+unchanged from the whole-file version; only granularity, cost, and stability
+improve.
 """
 
 from __future__ import annotations
@@ -26,7 +34,7 @@ import json
 import os
 
 from lexer import tokenize
-from parser import parse
+from parser import parse, is_canonical_statement_line
 from errors import EmmNormalizeError, EmmSyntaxError
 
 _DEFAULT_MODEL = "claude-haiku-4-5-20251001"
@@ -69,6 +77,11 @@ Grouping rule: a flat chain of ONE repeated operator needs no parentheses \
 with ( ): write (2 plus 3) times 4, never 2 plus 3 times 4. `not` may not sit on \
 either side of an infix operator without grouping: (not a) equals b, or \
 not (a equals b).
+
+Emit canonical at indentation level 0: the outermost statement(s) you produce \
+must start flush-left (no leading spaces), with nested blocks indented 4 spaces \
+relative to their header. The caller re-indents your output to its final \
+position, so always start at the left margin.
 
 Produce the most direct canonical translation of the user's program. Preserve \
 identifiers and string contents. Emit nothing but the canonical program.
@@ -113,53 +126,84 @@ def _parses_as_canonical(source: str) -> bool:
         return False
 
 
+def _leading_ws(line: str) -> str:
+    """The leading-whitespace prefix of ``line`` (spaces/tabs)."""
+    return line[:len(line) - len(line.lstrip(" \t"))]
+
+
+def _classify_regions(source: str):
+    """Split ``source`` into ordered (cls, [lines]) regions.
+
+    ``cls`` is ``"canonical"`` or ``"english"``. Non-blank lines are classified
+    with the single-line detector; blank lines are neutral and attach to the
+    current region (or, before any region, seed a leading canonical region that
+    passes through verbatim). Maximal consecutive same-class runs are grouped.
+    """
+    regions = []  # list of [cls, [physical lines]]
+    for line in source.splitlines():
+        if line.strip() == "":
+            cls = None  # blank: neutral
+        elif is_canonical_statement_line(line):
+            cls = "canonical"
+        else:
+            cls = "english"
+
+        if cls is None:
+            if regions:
+                regions[-1][1].append(line)
+            else:
+                # Leading blank(s): pass through as canonical (verbatim).
+                regions.append(["canonical", [line]])
+        elif regions and regions[-1][0] == cls:
+            regions[-1][1].append(line)
+        else:
+            regions.append([cls, [line]])
+    return regions
+
+
 def make_normalizer(cache_path: str = ".emm_norm_cache.json",
                     model: str = _DEFAULT_MODEL,
                     client=None):
-    """Build a `normalize(source) -> str` whole-file normalizer.
+    """Build a per-region `normalize(source) -> str` normalizer.
 
     `client` may be injected (e.g. a fake in tests, or a preconstructed
     Anthropic client); if None, a real client is constructed lazily on the
-    first cache miss, requiring ``ANTHROPIC_API_KEY``.
+    first English-region cache miss, requiring ``ANTHROPIC_API_KEY``.
     """
     state = {"client": client}
 
-    def normalize(source: str) -> str:
-        # 1. Canonical detection — no LLM, no key, short-circuits everything.
-        if _parses_as_canonical(source):
-            return source
-
-        # 2. Cache hit — no model call.
-        cache = _load_cache(cache_path)
-        if source in cache:
-            return cache[source]
-
-        # 3. Cache miss — resolve via the model.
+    def _client():
+        """Lazily obtain the Anthropic client (key check + import here)."""
         c = state["client"]
-        if c is None:
-            api_key = os.environ.get("ANTHROPIC_API_KEY")
-            if not api_key:
-                raise EmmNormalizeError(
-                    "set ANTHROPIC_API_KEY to normalize free-English E-- to "
-                    "canonical (no cached canonical form for this source)")
-            try:
-                import anthropic  # lazy: only needed on a live cache miss
-            except ImportError as exc:
-                raise EmmNormalizeError(
-                    "the 'anthropic' package is required to normalize "
-                    "free-English E-- but is not installed. Run: "
-                    "pip install -r requirements.txt") from exc
-            c = anthropic.Anthropic(api_key=api_key)
-            state["client"] = c
-
+        if c is not None:
+            return c
+        api_key = os.environ.get("ANTHROPIC_API_KEY")
+        if not api_key:
+            raise EmmNormalizeError(
+                "set ANTHROPIC_API_KEY to normalize free-English E-- to "
+                "canonical (no cached canonical form for this region)")
         try:
-            response = c.messages.create(
+            import anthropic  # lazy: only needed on a live cache miss
+        except ImportError as exc:
+            raise EmmNormalizeError(
+                "the 'anthropic' package is required to normalize "
+                "free-English E-- but is not installed. Run: "
+                "pip install -r requirements.txt") from exc
+        c = anthropic.Anthropic(api_key=api_key)
+        state["client"] = c
+        return c
+
+    def _call_model(region_text: str) -> str:
+        try:
+            response = _client().messages.create(
                 model=model,
                 max_tokens=2048,
                 temperature=0,
                 system=_SYSTEM_PROMPT,
-                messages=[{"role": "user", "content": source}],
+                messages=[{"role": "user", "content": region_text}],
             )
+        except EmmNormalizeError:
+            raise  # key/import errors from _client() pass through unchanged
         except Exception as exc:  # SDK / transport / auth errors
             name = type(exc).__name__
             if "Authentication" in name or "invalid x-api-key" in str(exc):
@@ -171,21 +215,51 @@ def make_normalizer(cache_path: str = ".emm_norm_cache.json",
             raise EmmNormalizeError(
                 f"LLM call failed while normalizing source: "
                 f"{name}: {exc}") from exc
+        return _strip_fences(response.content[0].text)
 
-        raw = response.content[0].text
-        result = _strip_fences(raw)
+    def normalize(source: str) -> str:
+        # Step 0 — fast path: a fully-canonical file passes straight through.
+        if _parses_as_canonical(source):
+            return source
 
-        # 4. Validate by re-parsing — never accept un-parseable "canonical".
+        # Steps 1-2 — classify lines and group into regions.
+        regions = _classify_regions(source)
+        cache = _load_cache(cache_path)
+        cache_dirty = False
+
+        # Step 3 — resolve each region.
+        out_lines = []
+        for cls, lines in regions:
+            if cls == "canonical":
+                out_lines.extend(lines)  # verbatim, byte-for-byte
+                continue
+            # English region: normalize via the LLM, cached by exact region text.
+            region_text = "\n".join(lines)
+            if region_text in cache:
+                canonical_region = cache[region_text]
+            else:
+                base_indent = _leading_ws(lines[0])
+                level0 = _call_model(region_text)
+                canonical_region = "\n".join(
+                    (base_indent + ln) if ln.strip() else ""
+                    for ln in level0.split("\n"))
+                cache[region_text] = canonical_region
+                cache_dirty = True
+            out_lines.extend(canonical_region.split("\n"))
+
+        result = "\n".join(out_lines)
+
+        # Step 4 — validate the stitched whole; never accept un-parseable output.
         try:
             parse(tokenize(result))
         except EmmSyntaxError as exc:
             raise EmmNormalizeError(
-                "the model's normalization did not parse as canonical E--. "
-                f"Parse error: {exc}\n--- model output ---\n{raw}") from exc
+                "the stitched normalization did not parse as canonical E--. "
+                f"Parse error: {exc}\n--- stitched output ---\n{result}"
+            ) from exc
 
-        # 5. Cache and return.
-        cache[source] = result
-        _write_cache(cache_path, cache)
+        if cache_dirty:
+            _write_cache(cache_path, cache)
         return result
 
     return normalize
